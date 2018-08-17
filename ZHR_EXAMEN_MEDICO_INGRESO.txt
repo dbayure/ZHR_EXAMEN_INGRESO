@@ -1,0 +1,266 @@
+*-----------------------------------------------------------------------
+* Programa    : Reporte examen medico ingreso
+* Descripcion : Reporte examen medico ingreso
+* Tran        : Imprime los datos de Infotipo 28
+* Subtipos    : Subtipos del 0021 al 0023
+* Autor       : RDF
+* Modificado  : 24/07/2018
+*------------------------
+REPORT ZHRMED_EX_MED_ING.
+
+TABLES: t578t, t578w, t578y, t578z, pa0001, pa0002, pa0006, pa0028, bhdgd, t502t.
+DATA:
+fnac      TYPE pa0002-gbdat,
+edad      TYPE i,
+apellido  TYPE pa0002-nachn,
+nombre    TYPE pa0002-cname,
+ftext     TYPE  pa0028-exdat,
+TEXTO     TYPE string,
+ci        LIKE pa0002-pernr,
+c_res     TYPE t578y-RSTXT,
+indx      TYPE t578t-sbjkt,
+infotipo  TYPE t578z-SUBTY,
+c_jnf(20), c_wtf(20), c_nmf(20), indxi(1) .
+
+DATA:
+ld_text_tab         TYPE HRPAD_TEXT_TAB ,
+ld_pernr 	          TYPE PSKEY-PERNR ,
+ld_is_ok 	          TYPE BOOLE_D ,
+ld_infty 	          TYPE PSKEY-INFTY ,
+ld_subty 	          TYPE PSKEY-SUBTY ,
+ld_objps 	          TYPE PSKEY-OBJPS ,
+ld_begda 	          TYPE PSKEY-BEGDA ,
+ld_endda 	          TYPE PSKEY-ENDDA ,
+ld_seqnr 	          TYPE PSKEY-SEQNR ,
+ld_no_auth_check 	  TYPE BOOLE_D ,
+ld_message_handler 	TYPE REF TO IF_HRPA_MESSAGE_HANDLER .
+
+FIELD-SYMBOLS:<hrpad_text> LIKE LINE OF ld_text_tab.
+FIELD-SYMBOLS: <ap>, <c_jnf>, <c_wtf>, <c_nmf>, <c_res>.
+
+DATA:
+lt_pa0002       TYPE TABLE OF pa0002 WITH HEADER LINE,
+lt_pa0028       TYPE TABLE OF pa0028 WITH HEADER LINE,
+lt_t578w        TYPE TABLE OF t578w WITH HEADER LINE,
+lt_t578t        TYPE TABLE OF t578t WITH HEADER LINE,
+lt_t578z        TYPE TABLE OF t578z WITH HEADER LINE,
+ANT_FAM         TYPE TABLE OF ZPAT_T578T_ANT_PER_EST,
+wa_pa0002       TYPE pa0002,
+wa_pa0028       TYPE pa0028,
+wa_t578w        TYPE t578w,
+wa_t578t        TYPE t578t,
+wa_t578z        TYPE t578z,
+l_function      TYPE rs38l_fnam,
+wa_antecedentes TYPE ZPAT_T578T_ANT_PER_EST,
+wa_ant          TYPE ZPAT_T578T_ANT_PER_EST.
+
+DATA lr_excpt TYPE REF TO cx_root.
+
+SELECTION-SCREEN SKIP 3.
+SELECTION-SCREEN BEGIN OF BLOCK uno
+WITH FRAME TITLE TEXT-001.
+SELECT-OPTIONS cedula FOR pa0001-pernr NO INTERVALS NO-EXTENSION OBLIGATORY MATCHCODE OBJECT prem.
+*PARAMETERS: fecha LIKE p0028-exdat.
+SELECT-OPTIONS fecha FOR pa0028-exdat NO INTERVALS NO-EXTENSION OBLIGATORY .
+SELECTION-SCREEN END OF BLOCK uno.
+
+START-OF-SELECTION.
+
+**** programa principal ************************************************
+
+  SELECT * FROM pa0002 INTO TABLE lt_pa0002 WHERE pernr IN cedula AND
+       begda <= sy-datum AND endda >= sy-datum.
+
+
+LOOP AT lt_pa0002 INTO wa_pa0002.
+    ci = wa_pa0002-pernr .
+    PERFORM cabecera.
+    PERFORM antecedentes.
+    PERFORM leer_texto.
+    PERFORM Imprimir_formulario.
+ENDLOOP.
+
+END-OF-SELECTION.
+************************** FIN DE PROGRAM PRINCIPAL ********************
+*&---------------------------------------------------------------------*
+*&      Form  CABECERA
+*&---------------------------------------------------------------------*
+FORM cabecera.
+  SELECT SINGLE * FROM pa0006 WHERE pernr = wa_pa0002-pernr AND
+       begda <= sy-datum AND endda >= sy-datum.
+
+  SELECT SINGLE * FROM t502t WHERE famst = wa_pa0002-famst AND sprsl = 'S'.
+  nombre = wa_pa0002-vorna.
+  apellido = wa_pa0002-nachn.
+  edad = sy-datum(4) - wa_pa0002-gbdat(4).
+  fnac = wa_pa0002-gbdat.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  ANTECEDENTES
+*&---------------------------------------------------------------------*
+FORM antecedentes.
+  SELECT SINGLE * FROM pa0028 WHERE pernr = ci AND subty = '0023' AND exdat IN fecha.
+  ASSIGN COMPONENT 'RESUL' OF STRUCTURE pa0028 TO <c_res>.
+  SELECT SINGLE * FROM t578Y WHERE sprsl = 'S' AND RESUL = <c_res>.
+  c_res = t578Y-RSTXT.
+  DO 3 TIMES.
+  MOVE sy-index TO indxi.
+  CONCATENATE '002' indxi INTO infotipo.
+  SELECT SINGLE * FROM pa0028 WHERE pernr = ci AND subty = infotipo AND exdat IN fecha.
+  SELECT * FROM T578Z INTO TABLE lt_t578z WHERE subty = infotipo ORDER BY sbjkt.
+  LOOP AT lt_t578z INTO wa_t578z.
+  MOVE sy-tabix TO indx.
+  IF sy-tabix LT 10.
+     CONCATENATE 'wtf0' indx INTO c_wtf.
+     CONCATENATE 'nmf0' indx INTO c_nmf.
+  ELSE.
+    CONCATENATE 'wtf' indx INTO c_wtf.
+    CONCATENATE 'nmf' indx INTO c_nmf.
+  ENDIF.
+  ASSIGN COMPONENT c_wtf OF STRUCTURE pa0028 TO <c_wtf>.
+  ASSIGN COMPONENT c_nmf OF STRUCTURE pa0028 TO <c_nmf>.
+  SELECT SINGLE * FROM t578T WHERE subty = wa_t578z-subty AND sbjkt = wa_t578z-sbjkt.
+  SELECT SINGLE * FROM t578W WHERE subty = wa_t578z-subty AND sbjkt = wa_t578z-sbjkt AND wtfld = <c_wtf>.
+  IF wa_t578z-WTFLD EQ '' AND wa_t578z-JNFLD EQ '' AND wa_t578z-NMFLD EQ '' AND wa_t578z-DTFLD EQ ''.
+    wa_antecedentes-ENFERMEDAD  = t578t-stext.
+    wa_antecedentes-TIPO        = ''.
+  ELSEIF wa_t578z-WTFLD EQ 'X' OR wa_t578z-JNFLD EQ 'X'.
+    wa_antecedentes-ENFERMEDAD  = t578t-stext.
+    wa_antecedentes-TIPO        = <c_wtf>.
+  ELSEIF wa_t578z-NMFLD EQ 'X'.
+    wa_antecedentes-ENFERMEDAD  = t578t-stext.
+    wa_antecedentes-TIPO        = <c_nmf>.
+  ELSE.
+    wa_antecedentes-ENFERMEDAD  = t578t-stext.
+    wa_antecedentes-TIPO  = t578W-stext.
+  ENDIF.
+  APPEND wa_antecedentes TO ANT_FAM.
+  ENDLOOP.
+  ENDDO.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  OBTENER TEXTOS
+*&---------------------------------------------------------------------*
+FORM leer_texto.
+SELECT SINGLE * FROM pa0028 WHERE pernr = ci AND subty = '0023' AND exdat IN fecha.
+
+ld_pernr = ci.
+ld_infty = '0028'.
+ld_subty = '0023'.
+IF fecha IS INITIAL.
+  ld_begda = sy-datum.
+  ld_endda = sy-datum.
+ELSE.
+  ld_begda = fecha-low.
+  ld_endda = fecha-low.
+ENDIF.
+
+IF PA0028-ITXEX IS NOT INITIAL.
+ld_no_auth_check = 'X'.
+TRY.
+CALL FUNCTION 'HR_ECM_READ_TEXT_INFOTYPE'
+  EXPORTING
+    pernr =                      ld_pernr
+    infty =                      ld_infty
+    subty =                      ld_subty
+*   objps =                      ld_objps
+    begda =                      ld_begda
+    endda =                      ld_endda
+*   seqnr =                      ld_seqnr
+    no_auth_check =              ld_no_auth_check
+    message_handler =            ld_message_handler
+  IMPORTING
+    text_tab =                   ld_text_tab
+    is_ok =                      ld_is_ok
+    .  "  HR_ECM_READ_TEXT_INFOTYPE
+CATCH CX_SY_REF_IS_INITIAL INTO lr_excpt.
+  WRITE: 'No se encontraron textos en el buffer'.
+ENDTRY.
+ENDIF.
+
+LOOP AT ld_text_tab ASSIGNING <hrpad_text>.
+  CONCATENATE TEXTO <hrpad_text> INTO texto.
+ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      OPEN FORM TO PRINTING
+*&---------------------------------------------------------------------*
+FORM Imprimir_formulario.
+  DATA:
+        form              TYPE tdsfname  VALUE 'ZHRMED_EX_MED_ING_FORM',
+        conn              TYPE rfcdest   VALUE 'ADS',
+        connections       TYPE ty_connections,
+        fm_name           TYPE rs38l_fnam,
+        fp_docparams      TYPE sfpdocparams,
+        fp_outputparams   TYPE sfpoutputparams,
+        fp_result         TYPE fpformoutput,
+        error_string      TYPE string.
+
+  CALL FUNCTION 'FP_FUNCTION_MODULE_NAME'
+    EXPORTING
+      i_name     = form
+    IMPORTING
+      e_funcname = fm_name.
+
+* Set output parameters and open spool job
+  fp_outputparams-preview  = 'X'.    " do not launch print preview
+  fp_outputparams-nodialog = 'X'.      " suppress print dialog
+  fp_outputparams-DEST = 'PDF1'.
+  fp_outputparams-connection = conn.
+  CALL FUNCTION 'FP_JOB_OPEN'
+    CHANGING
+      ie_outputparams = fp_outputparams
+    EXCEPTIONS
+*      cancel          = 1
+      usage_error     = 2
+      system_error    = 3
+      internal_error  = 4
+      OTHERS          = 5.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+* Set form language and country (->form locale)
+  fp_docparams-langu    = 'S'.
+  fp_docparams-country  = 'UY'.
+  fp_docparams-fillable = space.
+* Now call the generated function module
+
+  CALL FUNCTION fm_name
+    EXPORTING
+      /1bcdwb/docparams = fp_docparams
+      fp_nombre         = nombre
+      fp_apellido       = apellido
+      fp_edad           = edad
+      fp_fnac           = fnac
+      fp_ci             = ci
+      RESULTADO       = c_res
+      ZPAT_ANT_FAM    = ANT_FAM
+      FP_TEXTO        = TEXTO.
+
+*Estos son los datos que envio desde el programa ABAP
+*y que mi interfaz recibe, es necesario que
+*sean del mismo tipo sino habra un error en ejecución
+
+  CALL FUNCTION 'FP_JOB_CLOSE'
+    EXCEPTIONS
+      usage_error    = 1
+      system_error   = 2
+      internal_error = 3
+      OTHERS         = 4.
+
+  IF sy-subrc <> 0.
+
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+
+    WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+
+  ENDIF.
+
+ENDFORM.
